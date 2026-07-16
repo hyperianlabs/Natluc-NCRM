@@ -9,11 +9,18 @@
     {key:'quote', label:'Quote'},
   ];
   const SPEND_OPTIONS = ['Low (< R10k/mo)','Medium (R10k - R50k/mo)','High (R50k - R150k/mo)','Very High (R150k+/mo)'];
+  const LEAD_STATUSES = [
+    {key:'new', label:'New'},
+    {key:'contacted', label:'Contacted'},
+    {key:'converted', label:'Converted'},
+    {key:'dismissed', label:'Dismissed'},
+  ];
 
   let state = {
     session: null,
     customers: [],
     interactions: [],
+    leads: [],
     loaded: false,
     tab: 'dashboard',
     calMonth: new Date().getMonth(),
@@ -104,14 +111,17 @@
   async function loadData(){
     state.loaded = false;
     render();
-    const [{data: customers, error: cErr}, {data: interactions, error: iErr}] = await Promise.all([
+    const [{data: customers, error: cErr}, {data: interactions, error: iErr}, {data: leads, error: lErr}] = await Promise.all([
       supabaseClient.from('customers').select('*').order('name'),
       supabaseClient.from('interactions').select('*').order('date', {ascending:false}),
+      supabaseClient.from('leads').select('*').order('found_at', {ascending:false}),
     ]);
     if(cErr) console.error(cErr);
     if(iErr) console.error(iErr);
+    if(lErr) console.error(lErr);
     state.customers = customers || [];
     state.interactions = interactions || [];
+    state.leads = leads || [];
     state.loaded = true;
     render();
   }
@@ -121,6 +131,7 @@
     const tabs = [
       ['dashboard','Dashboard'],
       ['customers','Customers'],
+      ['leads','Leads'],
       ['calendar','Calendar'],
       ['reports','Follow-Up Report'],
     ];
@@ -360,6 +371,137 @@
     };
   }
 
+  // ---------- LEADS ----------
+  let leadStatusFilter = '';
+  let leadSearchBusy = false;
+
+  function renderLeads(){
+    const filtered = state.leads.filter(l=> !leadStatusFilter || l.status===leadStatusFilter);
+    const counts = LEAD_STATUSES.reduce((acc,s)=>{ acc[s.key] = state.leads.filter(l=>l.status===s.key).length; return acc; }, {});
+
+    contentEl.innerHTML = `
+      <div class="panel">
+        <h2>Find Leads</h2>
+        <p style="font-size:13px; color:var(--muted); margin:-6px 0 16px 0;">
+          Searches for machine shops, precision engineering firms, fabricators, toolrooms and mine maintenance
+          workshops — the kind of business that buys cutting tools, measuring instruments, PPE and hand tools.
+        </p>
+        <form class="grid-form" id="lead-search-form">
+          <div class="field"><label>Scope</label>
+            <select name="scope">
+              <option value="local">Local (Johannesburg area)</option>
+              <option value="national">National (major SA industrial hubs)</option>
+            </select>
+          </div>
+          <div class="field"><label>Custom Keyword (optional)</label><input type="text" name="keyword" placeholder="Leave blank to use default categories"/></div>
+          <div class="form-actions">
+            <button type="submit" class="btn" id="lead-search-btn">Find Leads Now</button>
+          </div>
+        </form>
+        <div id="lead-search-status" style="font-size:13px; color:var(--muted); margin-top:8px;"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Leads (${filtered.length})</h2>
+        <div class="search-bar">
+          <select id="lead-filter">
+            <option value="">All Statuses</option>
+            ${LEAD_STATUSES.map(s=>`<option value="${s.key}" ${leadStatusFilter===s.key?'selected':''}>${s.label} (${counts[s.key]||0})</option>`).join('')}
+          </select>
+        </div>
+        <div id="lead-list">
+          ${filtered.length ? `
+            <table>
+              <thead><tr><th>Business</th><th>Address</th><th>Phone</th><th>Website</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>
+                ${filtered.map(leadRowHtml).join('')}
+              </tbody>
+            </table>
+          ` : `<div class="empty-state"><div class="diamond-big"></div>No leads yet — run a search above to find some.</div>`}
+        </div>
+      </div>
+    `;
+
+    $('#lead-search-form').onsubmit = async (e)=>{
+      e.preventDefault();
+      if(leadSearchBusy) return;
+      leadSearchBusy = true;
+      const fd = new FormData(e.target);
+      const btn = $('#lead-search-btn');
+      const statusEl = $('#lead-search-status');
+      btn.disabled = true; btn.textContent = 'Searching...';
+      statusEl.textContent = 'This can take a little while, especially for a national search — please wait...';
+      try{
+        const { data, error } = await supabaseClient.functions.invoke('find-leads', {
+          body: { scope: fd.get('scope'), keyword: fd.get('keyword').trim() },
+        });
+        if(error) throw error;
+        statusEl.textContent = `Done — searched ${data.searched} queries, found ${data.found} businesses, added ${data.inserted} new leads (${data.skipped} already known).`;
+      }catch(err){
+        statusEl.textContent = 'Lead search failed: ' + (err.message || err);
+      }
+      btn.disabled = false; btn.textContent = 'Find Leads Now';
+      leadSearchBusy = false;
+      await loadData();
+    };
+
+    $('#lead-filter').onchange = (e)=>{ leadStatusFilter = e.target.value; renderLeads(); };
+
+    document.querySelectorAll('[data-convert-lead]').forEach(btn=>{
+      btn.onclick = ()=> convertLead(btn.dataset.convertLead);
+    });
+    document.querySelectorAll('[data-dismiss-lead]').forEach(btn=>{
+      btn.onclick = ()=> setLeadStatus(btn.dataset.dismissLead, 'dismissed');
+    });
+    document.querySelectorAll('[data-contacted-lead]').forEach(btn=>{
+      btn.onclick = ()=> setLeadStatus(btn.dataset.contactedLead, 'contacted');
+    });
+  }
+
+  function leadRowHtml(l){
+    const statusLabel = LEAD_STATUSES.find(s=>s.key===l.status)?.label || l.status;
+    return `
+      <tr>
+        <td><b>${l.name||'—'}</b></td>
+        <td>${l.address||'—'}</td>
+        <td>${l.phone||'—'}</td>
+        <td>${l.website ? `<a href="${l.website}" target="_blank" rel="noopener">Visit</a>` : '—'}</td>
+        <td>${l.matched_category||'—'}</td>
+        <td><span class="pill ${l.status==='converted'?'email':l.status==='dismissed'?'quote':l.status==='contacted'?'call':'physical'}">${statusLabel}</span></td>
+        <td style="white-space:nowrap;">
+          ${l.status==='new' ? `<button class="btn secondary small" data-contacted-lead="${l.id}">Mark Contacted</button> ` : ''}
+          ${l.status!=='converted' ? `<button class="btn small" data-convert-lead="${l.id}">Add as Customer</button> ` : ''}
+          ${l.status!=='dismissed' && l.status!=='converted' ? `<button class="btn danger small" data-dismiss-lead="${l.id}">Dismiss</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }
+
+  async function setLeadStatus(leadId, status){
+    const { error } = await supabaseClient.from('leads').update({ status }).eq('id', leadId);
+    if(error){ alert('Could not update lead: ' + error.message); return; }
+    await loadData();
+  }
+
+  async function convertLead(leadId){
+    const lead = state.leads.find(l=>l.id===leadId);
+    if(!lead) return;
+    const c = {
+      name: lead.name || 'Unnamed lead',
+      contact_person: '',
+      position: '',
+      contact_number: lead.phone || '',
+      email: '',
+      spending_potential: SPEND_OPTIONS[0],
+      current_supplier: '',
+      date_added: todayStr(),
+      captured_by: state.session?.user?.email || '',
+    };
+    const { error: insertErr } = await supabaseClient.from('customers').insert([c]);
+    if(insertErr){ alert('Could not create customer: ' + insertErr.message); return; }
+    await setLeadStatus(leadId, 'converted');
+  }
+
   // ---------- CALENDAR ----------
   function renderCalendar(){
     const y = state.calYear, m = state.calMonth;
@@ -546,6 +688,7 @@
     }
     if(state.tab==='dashboard') renderDashboard();
     else if(state.tab==='customers') renderCustomers();
+    else if(state.tab==='leads') renderLeads();
     else if(state.tab==='calendar') renderCalendar();
     else if(state.tab==='reports') renderReports();
   }
