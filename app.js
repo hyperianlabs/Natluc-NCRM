@@ -402,7 +402,10 @@
       </div>
 
       <div class="panel">
-        <h2>Leads (${filtered.length})</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h2 style="margin-bottom:0;">Leads (${filtered.length})</h2>
+          <button class="btn danger small" id="clear-leads-btn">Clear All Leads</button>
+        </div>
         <div class="search-bar">
           <select id="lead-filter">
             <option value="">All Statuses</option>
@@ -446,6 +449,15 @@
     };
 
     $('#lead-filter').onchange = (e)=>{ leadStatusFilter = e.target.value; renderLeads(); };
+
+    $('#clear-leads-btn').onclick = async ()=>{
+      if(!confirm(`This will permanently delete ALL ${state.leads.length} lead(s), regardless of status. This cannot be undone. Continue?`)) return;
+      const btn = $('#clear-leads-btn');
+      btn.disabled = true; btn.textContent = 'Clearing...';
+      const { error } = await supabaseClient.from('leads').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      if(error){ alert('Could not clear leads: ' + error.message); btn.disabled = false; btn.textContent = 'Clear All Leads'; return; }
+      await loadData();
+    };
 
     document.querySelectorAll('[data-convert-lead]').forEach(btn=>{
       btn.onclick = ()=> convertLead(btn.dataset.convertLead);
