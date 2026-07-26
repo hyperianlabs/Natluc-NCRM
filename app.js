@@ -21,6 +21,9 @@
     customers: [],
     interactions: [],
     leads: [],
+    contacts: [],
+    tasks: [],
+    staff: [],
     loaded: false,
     tab: 'dashboard',
     calMonth: new Date().getMonth(),
@@ -49,6 +52,9 @@
   }
   function customerById(id){ return state.customers.find(c=>c.id===id); }
   function typeLabel(k){ const t=TYPES.find(t=>t.key===k); return t?t.label:k; }
+  function staffByEmail(email){ return state.staff.find(s=>s.email===email); }
+  function staffName(email){ const s = staffByEmail(email); return s ? s.name : (email||'—'); }
+  function myEmail(){ return state.session?.user?.email || ''; }
 
   // ---------- AUTH ----------
   async function initAuth(){
@@ -111,17 +117,33 @@
   async function loadData(){
     state.loaded = false;
     render();
-    const [{data: customers, error: cErr}, {data: interactions, error: iErr}, {data: leads, error: lErr}] = await Promise.all([
+    const [
+      {data: customers, error: cErr},
+      {data: interactions, error: iErr},
+      {data: leads, error: lErr},
+      {data: contacts, error: coErr},
+      {data: tasks, error: tErr},
+      {data: staff, error: sErr},
+    ] = await Promise.all([
       supabaseClient.from('customers').select('*').order('name'),
       supabaseClient.from('interactions').select('*').order('date', {ascending:false}),
       supabaseClient.from('leads').select('*').order('found_at', {ascending:false}),
+      supabaseClient.from('contacts').select('*').order('name'),
+      supabaseClient.from('tasks').select('*').order('due_date', {ascending:true, nullsFirst:false}),
+      supabaseClient.from('staff').select('*').order('name'),
     ]);
     if(cErr) console.error(cErr);
     if(iErr) console.error(iErr);
     if(lErr) console.error(lErr);
+    if(coErr) console.error(coErr);
+    if(tErr) console.error(tErr);
+    if(sErr) console.error(sErr);
     state.customers = customers || [];
     state.interactions = interactions || [];
     state.leads = leads || [];
+    state.contacts = contacts || [];
+    state.tasks = tasks || [];
+    state.staff = staff || [];
     state.loaded = true;
     render();
   }
@@ -132,6 +154,7 @@
       ['dashboard','Dashboard'],
       ['customers','Customers'],
       ['leads','Leads'],
+      ['tasks','Tasks'],
       ['calendar','Calendar'],
       ['reports','Follow-Up Report'],
     ];
@@ -155,6 +178,9 @@
       .filter(i=> i.next_follow_up && i.next_follow_up >= todayStr())
       .sort((a,b)=> a.next_follow_up.localeCompare(b.next_follow_up));
     const highValue = state.customers.filter(c=> spendClass(c.spending_potential)==='high').length;
+    const myOpenTasks = state.tasks
+      .filter(t=> t.status==='open' && t.assigned_to===myEmail())
+      .sort((a,b)=> (a.due_date||'9999').localeCompare(b.due_date||'9999'));
 
     const recent = [...state.interactions].sort((a,b)=> b.date.localeCompare(a.date)).slice(0,6);
 
@@ -164,7 +190,23 @@
         <div class="stat-card"><div class="diamond"></div><div class="num">${thisMonthInteractions}</div><div class="lbl">Contacts This Month</div></div>
         <div class="stat-card"><div class="diamond"></div><div class="num">${upcoming.length}</div><div class="lbl">Upcoming Follow-Ups</div></div>
         <div class="stat-card"><div class="diamond"></div><div class="num">${highValue}</div><div class="lbl">High-Value Accounts</div></div>
+        <div class="stat-card"><div class="diamond"></div><div class="num">${myOpenTasks.length}</div><div class="lbl">My Open Tasks</div></div>
       </div>
+
+      ${myOpenTasks.length ? `
+      <div class="panel">
+        <h2>My Open Tasks</h2>
+        <table>
+          <thead><tr><th>Due</th><th>Task</th><th>Customer</th><th>From</th></tr></thead>
+          <tbody>
+            ${myOpenTasks.slice(0,8).map(t=>{
+              const c = t.customer_id ? customerById(t.customer_id) : null;
+              return `<tr><td>${t.due_date?fmtDate(t.due_date):'—'}</td><td>${t.title}</td><td>${c?c.name:'—'}</td><td>${staffName(t.created_by)}</td></tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : ''}
 
       <div class="panel">
         <h2>Upcoming Follow-Ups</h2>
@@ -287,88 +329,436 @@
     `;
   }
 
+  function esc(s){
+    return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
   function openCustomerModal(custId){
-    const c = customerById(custId);
-    if(!c) return;
-    const history = state.interactions.filter(i=>i.customer_id===custId).sort((a,b)=> b.date.localeCompare(a.date));
+    let editingCustomer = false;
+    let editingContactId = null;
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    overlay.innerHTML = `
-      <div class="modal">
-        <button class="close-x">&times;</button>
+    document.body.appendChild(overlay);
+    overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+
+    function renderModal(){
+      const c = customerById(custId);
+      if(!c){ overlay.remove(); return; }
+      const history = state.interactions.filter(i=>i.customer_id===custId).sort((a,b)=> b.date.localeCompare(a.date));
+      const customerContacts = state.contacts.filter(ct=>ct.customer_id===custId).sort((a,b)=>a.name.localeCompare(b.name));
+
+      const topHtml = editingCustomer ? `
+        <h2 style="margin-bottom:14px;">Edit Customer</h2>
+        <form class="grid-form" id="edit-cust-form" style="margin-bottom:18px;">
+          <div class="field"><label>Company / Customer Name</label><input type="text" name="name" value="${esc(c.name)}" required/></div>
+          <div class="field"><label>Contact Person</label><input type="text" name="contact_person" value="${esc(c.contact_person)}" required/></div>
+          <div class="field"><label>Position</label><input type="text" name="position" value="${esc(c.position)}"/></div>
+          <div class="field"><label>Contact Number</label><input type="tel" name="contact_number" value="${esc(c.contact_number)}" required/></div>
+          <div class="field"><label>Email Address</label><input type="email" name="email" value="${esc(c.email)}"/></div>
+          <div class="field"><label>Spending Potential</label>
+            <select name="spending_potential">${SPEND_OPTIONS.map(o=>`<option ${c.spending_potential===o?'selected':''}>${o}</option>`).join('')}</select>
+          </div>
+          <div class="field"><label>Current Supplier</label><input type="text" name="current_supplier" value="${esc(c.current_supplier)}"/></div>
+          <div class="field full"><label>Captured By (Staff Member)</label><input type="text" name="captured_by" value="${esc(c.captured_by)}" required/></div>
+          <div class="form-actions">
+            <button type="submit" class="btn">Save Changes</button>
+            <button type="button" class="btn secondary" id="cancel-edit-btn">Cancel</button>
+          </div>
+        </form>
+      ` : `
         <h2>${c.name}</h2>
         <div class="sub">${c.contact_person||''}${c.position ? ' · '+c.position : ''}</div>
-
-        <div class="details-row" style="margin-bottom:18px; flex-direction:column; gap:6px; font-size:13.5px;">
+        <div class="details-row" style="margin-bottom:10px; flex-direction:column; gap:6px; font-size:13.5px;">
           <div><b>Tel:</b> ${c.contact_number || '—'} &nbsp; <b>Email:</b> ${c.email || '—'}</div>
           <div><b>Spending Potential:</b> ${c.spending_potential || '—'}</div>
           <div><b>Current Supplier:</b> ${c.current_supplier || '—'}</div>
           <div><b>Captured:</b> ${fmtDate(c.date_added)} by ${c.captured_by || '—'}</div>
         </div>
+        <div style="margin-bottom:14px;"><button class="btn secondary small" id="edit-cust-btn">Edit Customer</button></div>
+      `;
 
-        <h2 style="font-size:15px;">Log Follow-Up Action</h2>
-        <form class="grid-form" id="interaction-form" style="margin-bottom:20px;">
-          <div class="field"><label>Date</label><input type="date" name="date" value="${todayStr()}" required/></div>
-          <div class="field"><label>Action Type</label>
-            <select name="type">${TYPES.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select>
-          </div>
-          <div class="field"><label>Staff Member</label><input type="text" name="staff" placeholder="Who made contact?" required/></div>
-          <div class="field"><label>Next Follow-Up (optional)</label><input type="date" name="next_follow_up"/></div>
-          <div class="field full"><label>Notes</label><textarea name="notes" placeholder="Outcome, discussion points, next steps..."></textarea></div>
-          <div class="form-actions"><button type="submit" class="btn">Save Action</button></div>
-        </form>
-
-        <h2 style="font-size:15px;">Interaction History</h2>
-        ${history.length ? `
-          <table>
-            <thead><tr><th>Date</th><th>Type</th><th>Staff</th><th>Notes</th><th>Next</th></tr></thead>
+      const contactsHtml = `
+        <h2 style="font-size:15px; margin-top:6px;">Additional Contacts</h2>
+        ${customerContacts.length ? `
+          <table style="margin-bottom:12px;">
+            <thead><tr><th>Name</th><th>Position</th><th>Phone</th><th>Email</th><th></th></tr></thead>
             <tbody>
-              ${history.map(i=>`
+              ${customerContacts.map(ct=> ct.id===editingContactId ? `
                 <tr>
-                  <td>${fmtDate(i.date)}</td>
-                  <td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td>
-                  <td>${i.staff}</td>
-                  <td>${i.notes||'—'}</td>
-                  <td>${i.next_follow_up ? fmtDate(i.next_follow_up) : '—'}</td>
-                </tr>`).join('')}
+                  <td colspan="5">
+                    <form class="grid-form" id="edit-contact-form" data-id="${ct.id}" style="margin:6px 0;">
+                      <div class="field"><label>Name</label><input type="text" name="name" value="${esc(ct.name)}" required/></div>
+                      <div class="field"><label>Position</label><input type="text" name="position" value="${esc(ct.position)}"/></div>
+                      <div class="field"><label>Phone</label><input type="tel" name="phone" value="${esc(ct.phone)}"/></div>
+                      <div class="field"><label>Email</label><input type="email" name="email" value="${esc(ct.email)}"/></div>
+                      <div class="form-actions">
+                        <button type="submit" class="btn small">Save</button>
+                        <button type="button" class="btn secondary small" id="cancel-edit-contact">Cancel</button>
+                      </div>
+                    </form>
+                  </td>
+                </tr>
+              ` : `
+                <tr>
+                  <td>${ct.name}</td>
+                  <td>${ct.position||'—'}</td>
+                  <td>${ct.phone||'—'}</td>
+                  <td>${ct.email||'—'}</td>
+                  <td style="white-space:nowrap;">
+                    <button class="btn secondary small" data-edit-contact="${ct.id}">Edit</button>
+                    <button class="btn danger small" data-del-contact="${ct.id}">Remove</button>
+                  </td>
+                </tr>
+              `).join('')}
             </tbody>
           </table>
-        ` : `<div class="empty-state">No follow-up actions logged yet.</div>`}
+        ` : `<div style="font-size:13px; color:var(--muted); margin-bottom:10px;">No additional contacts yet.</div>`}
+        <form class="grid-form" id="add-contact-form" style="margin-bottom:22px;">
+          <div class="field"><label>Name</label><input type="text" name="name" placeholder="Full name" required/></div>
+          <div class="field"><label>Position</label><input type="text" name="position" placeholder="e.g. Workshop Foreman"/></div>
+          <div class="field"><label>Phone</label><input type="tel" name="phone"/></div>
+          <div class="field"><label>Email</label><input type="email" name="email"/></div>
+          <div class="form-actions"><button type="submit" class="btn secondary small">Add Contact</button></div>
+        </form>
+      `;
 
-        <div style="margin-top:20px; text-align:right;">
-          <button class="btn danger small" id="del-cust">Delete Customer</button>
+      overlay.innerHTML = `
+        <div class="modal">
+          <button class="close-x">&times;</button>
+          ${topHtml}
+          ${contactsHtml}
+
+          <h2 style="font-size:15px;">Log Follow-Up Action</h2>
+          <form class="grid-form" id="interaction-form" style="margin-bottom:20px;">
+            <div class="field"><label>Date</label><input type="date" name="date" value="${todayStr()}" required/></div>
+            <div class="field"><label>Action Type</label>
+              <select name="type">${TYPES.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select>
+            </div>
+            <div class="field"><label>Staff Member</label><input type="text" name="staff" placeholder="Who made contact?" required/></div>
+            <div class="field"><label>Next Follow-Up (optional)</label><input type="date" name="next_follow_up"/></div>
+            <div class="field full"><label>Notes</label><textarea name="notes" placeholder="Outcome, discussion points, next steps..."></textarea></div>
+            <div class="form-actions"><button type="submit" class="btn">Save Action</button></div>
+          </form>
+
+          <h2 style="font-size:15px;">Interaction History</h2>
+          ${history.length ? `
+            <table>
+              <thead><tr><th>Date</th><th>Type</th><th>Staff</th><th>Notes</th><th>Next</th></tr></thead>
+              <tbody>
+                ${history.map(i=>`
+                  <tr>
+                    <td>${fmtDate(i.date)}</td>
+                    <td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td>
+                    <td>${i.staff}</td>
+                    <td>${i.notes||'—'}</td>
+                    <td>${i.next_follow_up ? fmtDate(i.next_follow_up) : '—'}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          ` : `<div class="empty-state">No follow-up actions logged yet.</div>`}
+
+          <div style="margin-top:20px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+            <button class="btn secondary small" id="assign-task-btn">Assign a Task for This Customer</button>
+            <button class="btn danger small" id="del-cust">Delete Customer</button>
+          </div>
         </div>
+      `;
+
+      wire();
+    }
+
+    function wire(){
+      overlay.querySelector('.close-x').onclick = ()=> overlay.remove();
+
+      const editBtn = overlay.querySelector('#edit-cust-btn');
+      if(editBtn) editBtn.onclick = ()=>{ editingCustomer = true; renderModal(); };
+
+      const cancelEditBtn = overlay.querySelector('#cancel-edit-btn');
+      if(cancelEditBtn) cancelEditBtn.onclick = ()=>{ editingCustomer = false; renderModal(); };
+
+      const editForm = overlay.querySelector('#edit-cust-form');
+      if(editForm) editForm.onsubmit = async (e)=>{
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const updates = {
+          name: fd.get('name').trim(),
+          contact_person: fd.get('contact_person').trim(),
+          position: fd.get('position').trim(),
+          contact_number: fd.get('contact_number').trim(),
+          email: fd.get('email').trim(),
+          spending_potential: fd.get('spending_potential'),
+          current_supplier: fd.get('current_supplier').trim(),
+          captured_by: fd.get('captured_by').trim(),
+        };
+        const { error } = await supabaseClient.from('customers').update(updates).eq('id', custId);
+        if(error){ alert('Could not save changes: ' + error.message); return; }
+        editingCustomer = false;
+        await loadData();
+        renderModal();
+      };
+
+      overlay.querySelector('#interaction-form').onsubmit = async (e)=>{
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const interaction = {
+          customer_id: custId,
+          date: fd.get('date'),
+          type: fd.get('type'),
+          staff: fd.get('staff').trim(),
+          notes: fd.get('notes').trim(),
+          next_follow_up: fd.get('next_follow_up') || null,
+        };
+        const { error } = await supabaseClient.from('interactions').insert([interaction]);
+        if(error){ alert('Could not save action: ' + error.message); return; }
+        await loadData();
+        renderModal();
+      };
+
+      overlay.querySelector('#add-contact-form').onsubmit = async (e)=>{
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const contact = {
+          customer_id: custId,
+          name: fd.get('name').trim(),
+          position: fd.get('position').trim(),
+          phone: fd.get('phone').trim(),
+          email: fd.get('email').trim(),
+        };
+        const { error } = await supabaseClient.from('contacts').insert([contact]);
+        if(error){ alert('Could not add contact: ' + error.message); return; }
+        await loadData();
+        renderModal();
+      };
+
+      document.querySelectorAll('[data-edit-contact]').forEach(btn=>{
+        btn.onclick = ()=>{ editingContactId = btn.dataset.editContact; renderModal(); };
+      });
+      document.querySelectorAll('[data-del-contact]').forEach(btn=>{
+        btn.onclick = async ()=>{
+          if(!confirm('Remove this contact?')) return;
+          const { error } = await supabaseClient.from('contacts').delete().eq('id', btn.dataset.delContact);
+          if(error){ alert('Could not remove contact: ' + error.message); return; }
+          await loadData();
+          renderModal();
+        };
+      });
+      const cancelContactBtn = overlay.querySelector('#cancel-edit-contact');
+      if(cancelContactBtn) cancelContactBtn.onclick = ()=>{ editingContactId = null; renderModal(); };
+
+      const editContactForm = overlay.querySelector('#edit-contact-form');
+      if(editContactForm) editContactForm.onsubmit = async (e)=>{
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const updates = {
+          name: fd.get('name').trim(),
+          position: fd.get('position').trim(),
+          phone: fd.get('phone').trim(),
+          email: fd.get('email').trim(),
+        };
+        const { error } = await supabaseClient.from('contacts').update(updates).eq('id', e.target.dataset.id);
+        if(error){ alert('Could not save contact: ' + error.message); return; }
+        editingContactId = null;
+        await loadData();
+        renderModal();
+      };
+
+      overlay.querySelector('#assign-task-btn').onclick = ()=>{
+        overlay.remove();
+        openTaskFormModal(custId);
+      };
+
+      overlay.querySelector('#del-cust').onclick = async ()=>{
+        const c = customerById(custId);
+        if(!confirm(`Delete ${c.name} and all related follow-up history and contacts? This cannot be undone.`)) return;
+        const { error } = await supabaseClient.from('customers').delete().eq('id', custId);
+        if(error){ alert('Could not delete: ' + error.message); return; }
+        overlay.remove();
+        await loadData();
+      };
+    }
+
+    renderModal();
+  }
+
+  // ---------- TASKS ----------
+  function openTaskFormModal(prefillCustomerId){
+    if(!state.staff.length){
+      alert('Add at least one staff member in the Tasks tab first, so there\'s someone to assign this to.');
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:520px;">
+        <button class="close-x">&times;</button>
+        <h2>Assign a Task</h2>
+        <div class="sub">Flag something for a staff member to follow up on.</div>
+        <form class="grid-form" id="task-form">
+          <div class="field full"><label>Task</label><input type="text" name="title" placeholder="e.g. Call about overdue invoice" required/></div>
+          <div class="field full"><label>Details (optional)</label><textarea name="description"></textarea></div>
+          <div class="field"><label>Assign To</label>
+            <select name="assigned_to" required>
+              ${state.staff.map(s=>`<option value="${s.email}">${s.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field"><label>Due Date (optional)</label><input type="date" name="due_date"/></div>
+          <div class="field full"><label>Related Customer (optional)</label>
+            <select name="customer_id">
+              <option value="">— None —</option>
+              ${state.customers.map(c=>`<option value="${c.id}" ${prefillCustomerId===c.id?'selected':''}>${c.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-actions"><button type="submit" class="btn">Assign Task</button></div>
+        </form>
       </div>
     `;
     document.body.appendChild(overlay);
     overlay.querySelector('.close-x').onclick = ()=> overlay.remove();
     overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
 
-    overlay.querySelector('#interaction-form').onsubmit = async (e)=>{
+    overlay.querySelector('#task-form').onsubmit = async (e)=>{
       e.preventDefault();
       const fd = new FormData(e.target);
-      const interaction = {
-        customer_id: custId,
-        date: fd.get('date'),
-        type: fd.get('type'),
-        staff: fd.get('staff').trim(),
-        notes: fd.get('notes').trim(),
-        next_follow_up: fd.get('next_follow_up') || null,
+      const task = {
+        title: fd.get('title').trim(),
+        description: fd.get('description').trim(),
+        assigned_to: fd.get('assigned_to'),
+        customer_id: fd.get('customer_id') || null,
+        due_date: fd.get('due_date') || null,
+        created_by: myEmail(),
+        status: 'open',
       };
-      const { error } = await supabaseClient.from('interactions').insert([interaction]);
-      if(error){ alert('Could not save action: ' + error.message); return; }
+      const { error } = await supabaseClient.from('tasks').insert([task]);
+      if(error){ alert('Could not create task: ' + error.message); return; }
       overlay.remove();
+      await loadData();
+    };
+  }
+
+  let taskFilter = 'mine';
+  function renderTasks(){
+    const relevantTasks = state.tasks.filter(t=> taskFilter==='all' || t.assigned_to===myEmail());
+    const openTasks = relevantTasks.filter(t=>t.status==='open').sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999'));
+    const doneTasks = relevantTasks.filter(t=>t.status==='done').sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||''));
+
+    contentEl.innerHTML = `
+      <div class="panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+          <h2 style="margin-bottom:0;">Tasks</h2>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <select id="task-filter">
+              <option value="mine" ${taskFilter==='mine'?'selected':''}>My Tasks</option>
+              <option value="all" ${taskFilter==='all'?'selected':''}>All Staff</option>
+            </select>
+            <button class="btn small" id="new-task-btn">Assign a Task</button>
+          </div>
+        </div>
+
+        <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:8px;">Open (${openTasks.length})</h3>
+        ${openTasks.length ? `
+          <table style="margin-bottom:24px;">
+            <thead><tr><th>Due</th><th>Task</th><th>Assigned To</th><th>Customer</th><th>From</th><th></th></tr></thead>
+            <tbody>
+              ${openTasks.map(taskRowHtml).join('')}
+            </tbody>
+          </table>
+        ` : `<div class="empty-state" style="padding:20px; margin-bottom:24px;">Nothing open here.</div>`}
+
+        <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:8px;">Done (${doneTasks.length})</h3>
+        ${doneTasks.length ? `
+          <table>
+            <thead><tr><th>Due</th><th>Task</th><th>Assigned To</th><th>Customer</th><th></th></tr></thead>
+            <tbody>
+              ${doneTasks.slice(0,15).map(t=>{
+                const c = t.customer_id ? customerById(t.customer_id) : null;
+                return `<tr style="opacity:.6;">
+                  <td>${t.due_date?fmtDate(t.due_date):'—'}</td>
+                  <td style="text-decoration:line-through;">${t.title}</td>
+                  <td>${staffName(t.assigned_to)}</td>
+                  <td>${c?c.name:'—'}</td>
+                  <td style="white-space:nowrap;"><button class="btn secondary small" data-reopen-task="${t.id}">Reopen</button> <button class="btn danger small" data-del-task="${t.id}">Delete</button></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        ` : `<div class="empty-state" style="padding:20px;">Nothing completed yet.</div>`}
+      </div>
+
+      <div class="panel">
+        <h2>Staff Directory</h2>
+        <p style="font-size:13px; color:var(--muted); margin:-6px 0 16px 0;">Add each staff member once, using the exact email they log in with, so tasks can be assigned to them.</p>
+        <form class="grid-form" id="staff-form" style="margin-bottom:18px;">
+          <div class="field"><label>Name</label><input type="text" name="name" placeholder="Full name" required/></div>
+          <div class="field"><label>Login Email</label><input type="email" name="email" placeholder="name@natluc.net" required/></div>
+          <div class="form-actions"><button type="submit" class="btn secondary small">Add Staff Member</button></div>
+        </form>
+        ${state.staff.length ? `
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th></th></tr></thead>
+            <tbody>
+              ${state.staff.map(s=>`<tr><td>${s.name}</td><td>${s.email}</td><td><button class="btn danger small" data-del-staff="${s.id}">Remove</button></td></tr>`).join('')}
+            </tbody>
+          </table>
+        ` : `<div class="empty-state">No staff added yet — add your team above so you can assign tasks to them.</div>`}
+      </div>
+    `;
+
+    $('#task-filter').onchange = (e)=>{ taskFilter = e.target.value; renderTasks(); };
+    $('#new-task-btn').onclick = ()=> openTaskFormModal(null);
+
+    document.querySelectorAll('[data-done-task]').forEach(btn=>{
+      btn.onclick = ()=> setTaskStatus(btn.dataset.doneTask, 'done');
+    });
+    document.querySelectorAll('[data-reopen-task]').forEach(btn=>{
+      btn.onclick = ()=> setTaskStatus(btn.dataset.reopenTask, 'open');
+    });
+    document.querySelectorAll('[data-del-task]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        if(!confirm('Delete this task?')) return;
+        const { error } = await supabaseClient.from('tasks').delete().eq('id', btn.dataset.delTask);
+        if(error){ alert('Could not delete: ' + error.message); return; }
+        await loadData();
+      };
+    });
+
+    $('#staff-form').onsubmit = async (e)=>{
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const s = { name: fd.get('name').trim(), email: fd.get('email').trim().toLowerCase() };
+      const { error } = await supabaseClient.from('staff').insert([s]);
+      if(error){ alert('Could not add staff member: ' + error.message); return; }
       await loadData();
     };
 
-    overlay.querySelector('#del-cust').onclick = async ()=>{
-      if(!confirm(`Delete ${c.name} and all related follow-up history? This cannot be undone.`)) return;
-      const { error } = await supabaseClient.from('customers').delete().eq('id', custId);
-      if(error){ alert('Could not delete: ' + error.message); return; }
-      overlay.remove();
-      await loadData();
-    };
+    document.querySelectorAll('[data-del-staff]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        if(!confirm('Remove this staff member? Existing tasks assigned to them will remain, showing their email instead of name.')) return;
+        const { error } = await supabaseClient.from('staff').delete().eq('id', btn.dataset.delStaff);
+        if(error){ alert('Could not remove: ' + error.message); return; }
+        await loadData();
+      };
+    });
+  }
+
+  function taskRowHtml(t){
+    const c = t.customer_id ? customerById(t.customer_id) : null;
+    return `
+      <tr>
+        <td>${t.due_date?fmtDate(t.due_date):'—'}</td>
+        <td>${t.title}${t.description?`<div style="font-size:12px; color:var(--muted); margin-top:2px;">${t.description}</div>`:''}</td>
+        <td>${staffName(t.assigned_to)}</td>
+        <td>${c?c.name:'—'}</td>
+        <td>${staffName(t.created_by)}</td>
+        <td style="white-space:nowrap;"><button class="btn small" data-done-task="${t.id}">Mark Done</button> <button class="btn danger small" data-del-task="${t.id}">Delete</button></td>
+      </tr>
+    `;
+  }
+
+  async function setTaskStatus(taskId, status){
+    const { error } = await supabaseClient.from('tasks').update({status}).eq('id', taskId);
+    if(error){ alert('Could not update task: ' + error.message); return; }
+    await loadData();
   }
 
   // ---------- LEADS ----------
@@ -701,6 +1091,7 @@
     if(state.tab==='dashboard') renderDashboard();
     else if(state.tab==='customers') renderCustomers();
     else if(state.tab==='leads') renderLeads();
+    else if(state.tab==='tasks') renderTasks();
     else if(state.tab==='calendar') renderCalendar();
     else if(state.tab==='reports') renderReports();
   }
