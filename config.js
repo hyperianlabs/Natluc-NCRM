@@ -11,5 +11,5 @@
 // schema.sql, not by keeping this key secret.
 // ============================================================
 
-const SUPABASE_URL = "PASTE_YOUR_SUPABASE_PROJECT_URL_HERE";
-const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
+const SUPABASE_URL = https://ctrehrfvxqpqjynmlssl.supabase.co;
+const SUPABASE_ANON_KEY = sb_publishable_BofqzRiH0-o_tvNgE4J2dA_SdgiM74i;
