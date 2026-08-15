@@ -56,6 +56,78 @@
   function staffName(email){ const s = staffByEmail(email); return s ? s.name : (email||'—'); }
   function myEmail(){ return state.session?.user?.email || ''; }
 
+  // ---------- VISIT PHOTOS ----------
+  const PHOTO_BUCKET = 'visit-photos';
+
+  async function resizeImage(file, maxDim=1600, quality=0.82){
+    const bitmap = await createImageBitmap(file);
+    let { width, height } = bitmap;
+    if(width > maxDim || height > maxDim){
+      const scale = maxDim / Math.max(width, height);
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+  }
+
+  async function uploadVisitPhotos(files){
+    const urls = [];
+    for(const file of files){
+      const blob = await resizeImage(file);
+      const path = `${crypto.randomUUID()}.jpg`;
+      const { error } = await supabaseClient.storage.from(PHOTO_BUCKET).upload(path, blob, {contentType:'image/jpeg'});
+      if(error) throw error;
+      const { data } = supabaseClient.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+      urls.push(data.publicUrl);
+    }
+    return urls;
+  }
+
+  function photoPickerHtml(id){
+    return `
+      <div class="field full">
+        <label>Photos (optional)</label>
+        <div class="photo-picker" id="${id}">
+          <input type="file" accept="image/*" multiple class="photo-input" style="display:none"/>
+          <button type="button" class="btn secondary small photo-add-btn">Add Photos</button>
+          <div class="photo-thumbs"></div>
+        </div>
+      </div>`;
+  }
+
+  function wirePhotoPicker(root){
+    const input = root.querySelector('.photo-input');
+    const addBtn = root.querySelector('.photo-add-btn');
+    const thumbs = root.querySelector('.photo-thumbs');
+    let files = [];
+    addBtn.onclick = ()=> input.click();
+    input.onchange = ()=>{
+      files = files.concat(Array.from(input.files));
+      input.value = '';
+      renderThumbs();
+    };
+    function renderThumbs(){
+      thumbs.innerHTML = files.map((f,idx)=>`
+        <div class="photo-thumb">
+          <img src="${URL.createObjectURL(f)}"/>
+          <button type="button" class="photo-remove" data-idx="${idx}">&times;</button>
+        </div>`).join('');
+      thumbs.querySelectorAll('.photo-remove').forEach(btn=>{
+        btn.onclick = ()=>{ files.splice(Number(btn.dataset.idx),1); renderThumbs(); };
+      });
+    }
+    return { getFiles: ()=> files };
+  }
+
+  function photoHistoryHtml(urls){
+    if(!urls || !urls.length) return '—';
+    return `<div class="photo-history-thumbs">${urls.map(u=>`<a href="${u}" target="_blank" rel="noopener"><img src="${u}"/></a>`).join('')}</div>`;
+  }
+
   // ---------- AUTH ----------
   async function initAuth(){
     const { data: { session } } = await supabaseClient.auth.getSession();
@@ -438,13 +510,14 @@
             <div class="field"><label>Staff Member</label><input type="text" name="staff" placeholder="Who made contact?" required/></div>
             <div class="field"><label>Next Follow-Up (optional)</label><input type="date" name="next_follow_up"/></div>
             <div class="field full"><label>Notes</label><textarea name="notes" placeholder="Outcome, discussion points, next steps..."></textarea></div>
+            ${photoPickerHtml('cust-photo-picker')}
             <div class="form-actions"><button type="submit" class="btn">Save Action</button></div>
           </form>
 
           <h2 style="font-size:15px;">Interaction History</h2>
           ${history.length ? `
             <table>
-              <thead><tr><th>Date</th><th>Type</th><th>Staff</th><th>Notes</th><th>Next</th></tr></thead>
+              <thead><tr><th>Date</th><th>Type</th><th>Staff</th><th>Notes</th><th>Next</th><th>Photos</th></tr></thead>
               <tbody>
                 ${history.map(i=>`
                   <tr>
@@ -453,6 +526,7 @@
                     <td>${i.staff}</td>
                     <td>${i.notes||'—'}</td>
                     <td>${i.next_follow_up ? fmtDate(i.next_follow_up) : '—'}</td>
+                    <td>${photoHistoryHtml(i.photo_urls)}</td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -498,9 +572,19 @@
         renderModal();
       };
 
+      const custPhotoPicker = wirePhotoPicker(overlay.querySelector('#cust-photo-picker'));
+
       overlay.querySelector('#interaction-form').onsubmit = async (e)=>{
         e.preventDefault();
         const fd = new FormData(e.target);
+        const submitBtn = e.target.querySelector('button[type=submit]');
+        const files = custPhotoPicker.getFiles();
+        let photo_urls = [];
+        if(files.length){
+          submitBtn.disabled = true; submitBtn.textContent = 'Uploading photos...';
+          try { photo_urls = await uploadVisitPhotos(files); }
+          catch(err){ alert('Could not upload photos: ' + err.message); submitBtn.disabled = false; submitBtn.textContent = 'Save Action'; return; }
+        }
         const interaction = {
           customer_id: custId,
           date: fd.get('date'),
@@ -508,6 +592,7 @@
           staff: fd.get('staff').trim(),
           notes: fd.get('notes').trim(),
           next_follow_up: fd.get('next_follow_up') || null,
+          photo_urls,
         };
         const { error } = await supabaseClient.from('interactions').insert([interaction]);
         if(error){ alert('Could not save action: ' + error.message); return; }
@@ -987,16 +1072,17 @@
           <div class="field"><label>Staff Member</label><input type="text" name="staff" placeholder="Who made contact?" required/></div>
           <div class="field full"><label>Next Follow-Up (optional)</label><input type="date" name="next_follow_up"/></div>
           <div class="field full"><label>Notes</label><textarea name="notes"></textarea></div>
+          ${photoPickerHtml('day-photo-picker')}
           <div class="form-actions"><button type="submit" class="btn">Add Action for This Date</button></div>
         </form>
 
         ${items.length ? `
           <table>
-            <thead><tr><th>Customer</th><th>Type</th><th>Staff</th><th>Notes</th></tr></thead>
+            <thead><tr><th>Customer</th><th>Type</th><th>Staff</th><th>Notes</th><th>Photos</th></tr></thead>
             <tbody>
               ${items.map(i=>{
                 const c = customerById(i.customer_id);
-                return `<tr><td>${c?c.name:'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${i.staff}</td><td>${i.notes||'—'}</td></tr>`;
+                return `<tr><td>${c?c.name:'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${i.staff}</td><td>${i.notes||'—'}</td><td>${photoHistoryHtml(i.photo_urls)}</td></tr>`;
               }).join('')}
             </tbody>
           </table>
@@ -1007,9 +1093,19 @@
     overlay.querySelector('.close-x').onclick = ()=> overlay.remove();
     overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
 
+    const dayPhotoPicker = wirePhotoPicker(overlay.querySelector('#day-photo-picker'));
+
     overlay.querySelector('#day-form').onsubmit = async (e)=>{
       e.preventDefault();
       const fd = new FormData(e.target);
+      const submitBtn = e.target.querySelector('button[type=submit]');
+      const files = dayPhotoPicker.getFiles();
+      let photo_urls = [];
+      if(files.length){
+        submitBtn.disabled = true; submitBtn.textContent = 'Uploading photos...';
+        try { photo_urls = await uploadVisitPhotos(files); }
+        catch(err){ alert('Could not upload photos: ' + err.message); submitBtn.disabled = false; submitBtn.textContent = 'Add Action for This Date'; return; }
+      }
       const interaction = {
         customer_id: fd.get('customer_id'),
         date: dateStr,
@@ -1017,6 +1113,7 @@
         staff: fd.get('staff').trim(),
         notes: fd.get('notes').trim(),
         next_follow_up: fd.get('next_follow_up') || null,
+        photo_urls,
       };
       const { error } = await supabaseClient.from('interactions').insert([interaction]);
       if(error){ alert('Could not save action: ' + error.message); return; }
