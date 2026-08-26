@@ -24,6 +24,8 @@
     contacts: [],
     tasks: [],
     staff: [],
+    documents: [],
+    documentSends: [],
     loaded: false,
     tab: 'dashboard',
     calMonth: new Date().getMonth(),
@@ -196,6 +198,8 @@
       {data: contacts, error: coErr},
       {data: tasks, error: tErr},
       {data: staff, error: sErr},
+      {data: documents, error: dErr},
+      {data: documentSends, error: dsErr},
     ] = await Promise.all([
       supabaseClient.from('customers').select('*').order('name'),
       supabaseClient.from('interactions').select('*').order('date', {ascending:false}),
@@ -203,6 +207,8 @@
       supabaseClient.from('contacts').select('*').order('name'),
       supabaseClient.from('tasks').select('*').order('due_date', {ascending:true, nullsFirst:false}),
       supabaseClient.from('staff').select('*').order('name'),
+      supabaseClient.from('documents').select('*').order('name'),
+      supabaseClient.from('document_sends').select('*').order('created_at', {ascending:false}),
     ]);
     if(cErr) console.error(cErr);
     if(iErr) console.error(iErr);
@@ -210,12 +216,16 @@
     if(coErr) console.error(coErr);
     if(tErr) console.error(tErr);
     if(sErr) console.error(sErr);
+    if(dErr) console.error(dErr);
+    if(dsErr) console.error(dsErr);
     state.customers = customers || [];
     state.interactions = interactions || [];
     state.leads = leads || [];
     state.contacts = contacts || [];
     state.tasks = tasks || [];
     state.staff = staff || [];
+    state.documents = documents || [];
+    state.documentSends = documentSends || [];
     state.loaded = true;
     render();
   }
@@ -227,6 +237,7 @@
       ['customers','Customers'],
       ['leads','Leads'],
       ['tasks','Tasks'],
+      ['documents','Documents'],
       ['calendar','Calendar'],
       ['reports','Follow-Up Report'],
     ];
@@ -419,6 +430,7 @@
       if(!c){ overlay.remove(); return; }
       const history = state.interactions.filter(i=>i.customer_id===custId).sort((a,b)=> b.date.localeCompare(a.date));
       const customerContacts = state.contacts.filter(ct=>ct.customer_id===custId).sort((a,b)=>a.name.localeCompare(b.name));
+      const docSends = state.documentSends.filter(s=>s.customer_id===custId).sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||''));
 
       const topHtml = editingCustomer ? `
         <h2 style="margin-bottom:14px;">Edit Customer</h2>
@@ -532,8 +544,27 @@
             </table>
           ` : `<div class="empty-state">No follow-up actions logged yet.</div>`}
 
-          <div style="margin-top:20px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-            <button class="btn secondary small" id="assign-task-btn">Assign a Task for This Customer</button>
+          <h2 style="font-size:15px;">Documents Sent</h2>
+          ${docSends.length ? `
+            <table style="margin-bottom:20px;">
+              <thead><tr><th>Date</th><th>To</th><th>Documents</th><th>Sent By</th></tr></thead>
+              <tbody>
+                ${docSends.map(s=>`
+                  <tr>
+                    <td>${s.created_at ? fmtDate(s.created_at.slice(0,10)) : '—'}</td>
+                    <td>${esc(s.to_email)}</td>
+                    <td>${(s.document_names||[]).map(esc).join(', ')}</td>
+                    <td>${staffName(s.sent_by)}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          ` : `<div class="empty-state" style="margin-bottom:20px;">No documents sent to this customer yet.</div>`}
+
+          <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="btn secondary small" id="assign-task-btn">Assign a Task for This Customer</button>
+              <button class="btn secondary small" id="send-docs-btn">Email Documents</button>
+            </div>
             <button class="btn danger small" id="del-cust">Delete Customer</button>
           </div>
         </div>
@@ -651,6 +682,10 @@
       overlay.querySelector('#assign-task-btn').onclick = ()=>{
         overlay.remove();
         openTaskFormModal(custId);
+      };
+
+      overlay.querySelector('#send-docs-btn').onclick = ()=>{
+        openSendDocumentsModal(custId);
       };
 
       overlay.querySelector('#del-cust').onclick = async ()=>{
@@ -844,6 +879,190 @@
     const { error } = await supabaseClient.from('tasks').update({status}).eq('id', taskId);
     if(error){ alert('Could not update task: ' + error.message); return; }
     await loadData();
+  }
+
+  // ---------- DOCUMENTS ----------
+  const DOC_BUCKET = 'documents';
+
+  function fmtBytes(n){
+    if(!n && n!==0) return '—';
+    if(n < 1024*1024) return Math.round(n/1024) + ' KB';
+    return (n/(1024*1024)).toFixed(1) + ' MB';
+  }
+
+  async function uploadDocument(file){
+    const path = `${crypto.randomUUID()}-${file.name}`;
+    const { error: upErr } = await supabaseClient.storage.from(DOC_BUCKET).upload(path, file, {contentType: file.type || undefined});
+    if(upErr) throw upErr;
+    const { data } = supabaseClient.storage.from(DOC_BUCKET).getPublicUrl(path);
+    return { file_path: path, file_url: data.publicUrl, file_name: file.name, file_size: file.size, mime_type: file.type || null };
+  }
+
+  function renderDocuments(){
+    const docs = [...state.documents].sort((a,b)=> a.name.localeCompare(b.name));
+    const sends = [...state.documentSends].sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||'')).slice(0,20);
+
+    contentEl.innerHTML = `
+      <div class="panel">
+        <h2>Add a Document</h2>
+        <div class="sub">Upload once, then email it to any customer from their detail view. Videos and large files are sent as a link instead of an attachment.</div>
+        <form class="grid-form" id="doc-form">
+          <div class="field"><label>Display Name</label><input type="text" name="name" placeholder="e.g. Credit Application" required/></div>
+          <div class="field full"><label>Description (optional)</label><input type="text" name="description" placeholder="Shown to staff, not the customer"/></div>
+          <div class="field full"><label>File</label><input type="file" name="file" required/></div>
+          <div class="form-actions"><button type="submit" class="btn">Upload</button></div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>Document Library (${docs.length})</h2>
+        ${docs.length ? `
+          <table>
+            <thead><tr><th>Name</th><th>Description</th><th>File</th><th>Size</th><th></th></tr></thead>
+            <tbody>
+              ${docs.map(d=>`
+                <tr>
+                  <td>${esc(d.name)}</td>
+                  <td>${esc(d.description||'—')}</td>
+                  <td><a href="${d.file_url}" target="_blank" rel="noopener">${esc(d.file_name)}</a></td>
+                  <td>${fmtBytes(d.file_size)}</td>
+                  <td><button class="btn danger small" data-del-doc="${d.id}">Delete</button></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        ` : `<div class="empty-state">No documents uploaded yet.</div>`}
+      </div>
+
+      <div class="panel">
+        <h2>Recent Sends</h2>
+        ${sends.length ? `
+          <table>
+            <thead><tr><th>Date</th><th>Customer</th><th>To</th><th>Documents</th><th>Sent By</th></tr></thead>
+            <tbody>
+              ${sends.map(s=>{
+                const c = s.customer_id ? customerById(s.customer_id) : null;
+                return `<tr>
+                  <td>${s.created_at ? fmtDate(s.created_at.slice(0,10)) : '—'}</td>
+                  <td>${c?c.name:'—'}</td>
+                  <td>${esc(s.to_email)}</td>
+                  <td>${(s.document_names||[]).map(esc).join(', ')}</td>
+                  <td>${staffName(s.sent_by)}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        ` : `<div class="empty-state">No documents sent yet.</div>`}
+      </div>
+    `;
+
+    $('#doc-form').onsubmit = async (e)=>{
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const file = fd.get('file');
+      const btn = e.target.querySelector('button[type=submit]');
+      if(!file || !file.size){ alert('Choose a file first.'); return; }
+      btn.disabled = true; btn.textContent = 'Uploading...';
+      try{
+        const uploaded = await uploadDocument(file);
+        const { error } = await supabaseClient.from('documents').insert([{
+          name: fd.get('name').trim(),
+          description: fd.get('description').trim(),
+          uploaded_by: myEmail(),
+          ...uploaded,
+        }]);
+        if(error) throw error;
+      }catch(err){
+        alert('Could not upload document: ' + err.message);
+        btn.disabled = false; btn.textContent = 'Upload';
+        return;
+      }
+      await loadData();
+    };
+
+    document.querySelectorAll('[data-del-doc]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        const d = state.documents.find(x=>x.id===btn.dataset.delDoc);
+        if(!d) return;
+        if(!confirm(`Delete "${d.name}"? This cannot be undone.`)) return;
+        await supabaseClient.storage.from(DOC_BUCKET).remove([d.file_path]);
+        const { error } = await supabaseClient.from('documents').delete().eq('id', d.id);
+        if(error){ alert('Could not delete: ' + error.message); return; }
+        await loadData();
+      };
+    });
+  }
+
+  function openSendDocumentsModal(custId){
+    const c = customerById(custId);
+    if(!state.documents.length){
+      alert('Upload at least one document in the Documents tab first.');
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:560px;">
+        <button class="close-x">&times;</button>
+        <h2>Email Documents</h2>
+        <div class="sub">To ${esc(c.name)}</div>
+        <form class="grid-form" id="send-docs-form">
+          <div class="field full"><label>To</label><input type="email" name="to_email" value="${esc(c.email||'')}" required/></div>
+          <div class="field full"><label>Subject</label><input type="text" name="subject" value="Documents from Natluc Trading"/></div>
+          <div class="field full"><label>Message (optional)</label><textarea name="message" placeholder="A short note to include above the documents..."></textarea></div>
+          <div class="field full">
+            <label>Documents to Send</label>
+            <div style="display:flex; flex-direction:column; gap:6px; margin-top:2px;">
+              ${state.documents.map(d=>`
+                <label style="display:flex; align-items:center; gap:8px; font-weight:400; text-transform:none; letter-spacing:normal; font-size:13.5px;">
+                  <input type="checkbox" name="doc_ids" value="${d.id}"/>
+                  ${esc(d.name)} <span style="color:var(--muted);">(${fmtBytes(d.file_size)})</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn secondary small" id="welcome-template-btn">Use Welcome Template</button>
+            <button type="submit" class="btn">Send Email</button>
+          </div>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.close-x').onclick = ()=> overlay.remove();
+    overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+
+    overlay.querySelector('#welcome-template-btn').onclick = ()=>{
+      const form = overlay.querySelector('#send-docs-form');
+      form.subject.value = 'Welcome to Natluc Trading — a quick tour of natluc.net';
+      form.message.value = `Hi${c.contact_person ? ' ' + c.contact_person : ''},\n\nWelcome to Natluc Trading! To help you get the most out of natluc.net, we've put together a short video walking through:\n\n- Finding the Cromwell and Iscar tooling catalogs\n- Browsing by category to find the right part or spec\n- Using the free shop-floor toolbox calculator\n- Submitting a quote request for custom or urgent needs\n- Reaching us directly if you need a hand\n\nWe've also attached our credit application in case you'd like to set up an account.\n\nAny questions, just reply to this email.`;
+      const videoDoc = state.documents.find(d => (d.mime_type||'').startsWith('video/'));
+      const creditDoc = state.documents.find(d => /credit application/i.test(d.name));
+      form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
+        cb.checked = (videoDoc && cb.value===videoDoc.id) || (creditDoc && cb.value===creditDoc.id);
+      });
+    };
+
+    overlay.querySelector('#send-docs-form').onsubmit = async (e)=>{
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const document_ids = fd.getAll('doc_ids');
+      if(!document_ids.length){ alert('Select at least one document.'); return; }
+      const btn = e.target.querySelector('button[type=submit]');
+      btn.disabled = true; btn.textContent = 'Sending...';
+      const { error } = await supabaseClient.functions.invoke('send-documents', {
+        body: {
+          document_ids,
+          to_email: fd.get('to_email').trim(),
+          to_name: c.contact_person || c.name,
+          subject: fd.get('subject').trim(),
+          message: fd.get('message').trim(),
+          customer_id: custId,
+        },
+      });
+      if(error){ alert('Could not send email: ' + error.message); btn.disabled = false; btn.textContent = 'Send Email'; return; }
+      overlay.remove();
+      await loadData();
+    };
   }
 
   // ---------- LEADS ----------
@@ -1189,6 +1408,7 @@
     else if(state.tab==='customers') renderCustomers();
     else if(state.tab==='leads') renderLeads();
     else if(state.tab==='tasks') renderTasks();
+    else if(state.tab==='documents') renderDocuments();
     else if(state.tab==='calendar') renderCalendar();
     else if(state.tab==='reports') renderReports();
   }
