@@ -12,6 +12,9 @@
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
 const TASK_NOTIFY_SECRET = Deno.env.get('TASK_NOTIFY_SECRET');
 const FROM_EMAIL = Deno.env.get('RESEND_FROM_EMAIL') || 'onboarding@resend.dev';
+// FROM_EMAIL sends from the crm.natluctrading.co.za subdomain, which has no
+// inbox behind it — replies need to land somewhere a human actually reads.
+const REPLY_TO_EMAIL = Deno.env.get('RESEND_REPLY_TO') || 'riaan@natluctrading.co.za';
 
 function escapeHtml(s: string) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
@@ -86,6 +89,7 @@ Deno.serve(async (req) => {
     body: JSON.stringify({
       from: FROM_EMAIL,
       to: assignee_email,
+      reply_to: REPLY_TO_EMAIL,
       subject: `New task: ${title}`,
       html,
     }),

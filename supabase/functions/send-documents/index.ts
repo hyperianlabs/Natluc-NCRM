@@ -14,6 +14,9 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
 const FROM_EMAIL = Deno.env.get('RESEND_FROM_EMAIL') || 'onboarding@resend.dev';
+// FROM_EMAIL sends from the crm.natluctrading.co.za subdomain, which has no
+// inbox behind it — replies need to land somewhere a human actually reads.
+const REPLY_TO_EMAIL = Deno.env.get('RESEND_REPLY_TO') || 'riaan@natluctrading.co.za';
 
 function escapeHtml(s: string) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
@@ -113,7 +116,7 @@ Deno.serve(async (req) => {
   const html = `
     <div style="font-family:sans-serif;max-width:480px;margin:0 auto;">
       <div style="background:#2A2A2C;padding:20px 24px;border-bottom:4px solid #EA9A21;">
-        <h1 style="color:#fff;font-size:18px;margin:0;">Natluc Trading</h1>
+        <img src="https://natluc.net/assets/natluc-logo.png" alt="Natluc Trading" height="28" style="display:block;height:28px;width:auto;"/>
       </div>
       <div style="padding:24px;">
         <p style="margin:0 0 4px 0;">Hi ${escapeHtml(to_name || '')},</p>
@@ -144,6 +147,7 @@ Deno.serve(async (req) => {
     body: JSON.stringify({
       from: FROM_EMAIL,
       to: to_email,
+      reply_to: REPLY_TO_EMAIL,
       subject: emailSubject,
       html,
       ...(attachDocs.length ? { attachments: attachDocs.map(d => ({ path: d.file_url, filename: d.file_name })) } : {}),
