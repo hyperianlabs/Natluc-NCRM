@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
   const html = `
     <div style="font-family:sans-serif;max-width:480px;margin:0 auto;">
       <div style="background:#2A2A2C;padding:20px 24px;border-bottom:4px solid #EA9A21;">
-        <img src="https://natluc.net/assets/natluc-logo.png" alt="Natluc Trading" height="28" style="display:block;height:28px;width:auto;"/>
+        <img src="https://hyperianlabs.github.io/Natluc-NCRM/assets/natluc-logo.png" alt="Natluc Trading" height="28" style="display:block;height:28px;width:auto;"/>
       </div>
       <div style="padding:24px;">
         <p style="margin:0 0 4px 0;">Hi ${escapeHtml(to_name || '')},</p>
