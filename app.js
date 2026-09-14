@@ -346,7 +346,12 @@
             <select name="spending_potential">${SPEND_OPTIONS.map(o=>`<option>${o}</option>`).join('')}</select>
           </div>
           <div class="field"><label>Current Supplier</label><input type="text" name="current_supplier" placeholder="Who do they buy from now?"/></div>
-          <div class="field full"><label>Captured By (Staff Member)</label><input type="text" name="captured_by" placeholder="Staff member name" required/></div>
+          <div class="field full"><label>Captured By (Staff Member)</label>
+            <select name="captured_by" required>
+              <option value="" disabled selected>Select staff member</option>
+              ${state.staff.map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('')}
+            </select>
+          </div>
           <div class="form-actions">
             <button type="submit" class="btn">Add Customer</button>
           </div>
@@ -444,7 +449,13 @@
             <select name="spending_potential">${SPEND_OPTIONS.map(o=>`<option ${c.spending_potential===o?'selected':''}>${o}</option>`).join('')}</select>
           </div>
           <div class="field"><label>Current Supplier</label><input type="text" name="current_supplier" value="${esc(c.current_supplier)}"/></div>
-          <div class="field full"><label>Captured By (Staff Member)</label><input type="text" name="captured_by" value="${esc(c.captured_by)}" required/></div>
+          <div class="field full"><label>Captured By (Staff Member)</label>
+            <select name="captured_by" required>
+              <option value="" disabled ${!c.captured_by?'selected':''}>Select staff member</option>
+              ${state.staff.map(s=>`<option value="${esc(s.name)}" ${c.captured_by===s.name?'selected':''}>${esc(s.name)}</option>`).join('')}
+              ${c.captured_by && !state.staff.some(s=>s.name===c.captured_by) ? `<option value="${esc(c.captured_by)}" selected>${esc(c.captured_by)}</option>` : ''}
+            </select>
+          </div>
           <div class="form-actions">
             <button type="submit" class="btn">Save Changes</button>
             <button type="button" class="btn secondary" id="cancel-edit-btn">Cancel</button>
@@ -1022,6 +1033,8 @@
           </div>
           <div class="form-actions">
             <button type="button" class="btn secondary small" id="welcome-template-btn">Use Welcome Template</button>
+            <button type="button" class="btn secondary small" id="credit-app-template-btn">Use Credit Application Template</button>
+            <button type="button" class="btn secondary small" id="video-template-btn">Use Video Walkthrough Template</button>
             <button type="submit" class="btn">Send Email</button>
           </div>
         </form>
@@ -1039,6 +1052,26 @@
       const creditDoc = state.documents.find(d => /credit application/i.test(d.name));
       form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
         cb.checked = (videoDoc && cb.value===videoDoc.id) || (creditDoc && cb.value===creditDoc.id);
+      });
+    };
+
+    overlay.querySelector('#credit-app-template-btn').onclick = ()=>{
+      const form = overlay.querySelector('#send-docs-form');
+      form.subject.value = 'Natluc Trading — Credit Application';
+      form.message.value = `Thank you for your interest in trading with Natluc Trading.\n\nPlease find attached our Credit Application Form for completion. Once completed, kindly return the form along with the required supporting documentation to accounts@natluctrading.co.za.\n\nShould you have any questions or require assistance, please feel free to contact us.\n\nWe look forward to doing business with you.\n\nKind regards,\nNatluc Trading\nAccounts Department\naccounts@natluctrading.co.za`;
+      const creditDoc = state.documents.find(d => /credit application/i.test(d.name));
+      form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
+        cb.checked = (creditDoc && cb.value===creditDoc.id);
+      });
+    };
+
+    overlay.querySelector('#video-template-btn').onclick = ()=>{
+      const form = overlay.querySelector('#send-docs-form');
+      form.subject.value = 'Natluc Trading — Website Walkthrough';
+      form.message.value = `Welcome to Natluc Trading.\n\nWe’ve put together a short tutorial video to help you navigate our website and make it easier to find the products and information you need.\n\nWe hope you find it helpful. Should you have any questions or need any assistance, please feel free to contact us.\n\nWe look forward to assisting you.\n\nKind regards,\nNatluc Trading\naccounts@natluctrading.co.za`;
+      const videoDoc = state.documents.find(d => (d.mime_type||'').startsWith('video/'));
+      form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
+        cb.checked = (videoDoc && cb.value===videoDoc.id);
       });
     };
 
