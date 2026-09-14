@@ -1058,7 +1058,7 @@
     overlay.querySelector('#credit-app-template-btn').onclick = ()=>{
       const form = overlay.querySelector('#send-docs-form');
       form.subject.value = 'Natluc Trading — Credit Application';
-      form.message.value = `Thank you for your interest in trading with Natluc Trading.\n\nPlease find attached our Credit Application Form for completion. Once completed, kindly return the form along with the required supporting documentation to accounts@natluctrading.co.za.\n\nShould you have any questions or require assistance, please feel free to contact us.\n\nWe look forward to doing business with you.\n\nKind regards,\nNatluc Trading\nAccounts Department\naccounts@natluctrading.co.za`;
+      form.message.value = `Thank you for your interest in trading with Natluc Trading.\n\nPlease find attached our Credit Application Form for completion. Once completed, kindly return the form along with the required supporting documentation to accounts@natluctrading.co.za.\n\nShould you have any questions or require assistance, please feel free to contact us. You can also visit us at www.natluc.net.\n\nWe look forward to doing business with you.\n\nKind regards,\nNatluc Trading\nAccounts Department\naccounts@natluctrading.co.za`;
       const creditDoc = state.documents.find(d => /credit application/i.test(d.name));
       form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
         cb.checked = (creditDoc && cb.value===creditDoc.id);
@@ -1068,7 +1068,7 @@
     overlay.querySelector('#video-template-btn').onclick = ()=>{
       const form = overlay.querySelector('#send-docs-form');
       form.subject.value = 'Natluc Trading — Website Walkthrough';
-      form.message.value = `Welcome to Natluc Trading.\n\nWe’ve put together a short tutorial video to help you navigate our website and make it easier to find the products and information you need.\n\nWe hope you find it helpful. Should you have any questions or need any assistance, please feel free to contact us.\n\nWe look forward to assisting you.\n\nKind regards,\nNatluc Trading\naccounts@natluctrading.co.za`;
+      form.message.value = `Welcome to Natluc Trading.\n\nWe’ve put together a short tutorial video to help you navigate our website and make it easier to find the products and information you need. You can visit our website at www.natluc.net.\n\nWe hope you find it helpful. Should you have any questions or need any assistance, please feel free to contact us.\n\nWe look forward to assisting you.\n\nKind regards,\nNatluc Trading\naccounts@natluctrading.co.za`;
       const videoDoc = state.documents.find(d => (d.mime_type||'').startsWith('video/'));
       form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
         cb.checked = (videoDoc && cb.value===videoDoc.id);
