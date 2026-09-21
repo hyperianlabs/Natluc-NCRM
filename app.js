@@ -1087,8 +1087,8 @@
 
     overlay.querySelector('#video-template-btn').onclick = ()=>{
       const form = overlay.querySelector('#send-docs-form');
-      form.subject.value = 'Natluc Trading — Website Walkthrough';
-      form.message.value = `Welcome to Natluc Trading.\n\nWe’ve put together a short tutorial video to help you navigate our website and make it easier to find the products and information you need. You can visit our website at www.natluc.net.\n\nWe hope you find it helpful. Should you have any questions or need any assistance, please feel free to contact us.\n\nWe look forward to assisting you.\n\nKind regards,\nNatluc Trading\naccounts@natluctrading.co.za`;
+      form.subject.value = 'Your quick video tour of natluc.net — Natluc Trading';
+      form.message.value = `Thank you for choosing Natluc Trading. To help you get up and running quickly, we’ve recorded a short walkthrough of our website — just click the Watch button below.\n\nIn a few minutes it shows you how to:\n\n- Find the Cromwell and Iscar tooling catalogs\n- Browse by category to quickly locate the right part or spec\n- Use the free shop-floor toolbox calculator\n- Send us a quote request for custom or urgent items\n- Get hold of our team whenever you need a hand\n\nYou can also explore everything anytime at www.natluc.net.\n\nIf anything is unclear or you’d like help getting started, simply reply to this email — we’re always glad to assist.\n\nKind regards,\nNatluc Trading\naccounts@natluctrading.co.za`;
       const videoDoc = state.documents.find(d => (d.mime_type||'').startsWith('video/'));
       form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
         cb.checked = (videoDoc && cb.value===videoDoc.id);
