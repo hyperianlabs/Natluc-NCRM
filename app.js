@@ -40,7 +40,10 @@
   const contentEl = $('#content');
   const userBadgeEl = $('#user-badge');
 
-  function todayStr(){ return new Date().toISOString().slice(0,10); }
+  function todayStr(){
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
   function fmtDate(d){
     if(!d) return '—';
     const dt = new Date(d+'T00:00:00');
@@ -57,6 +60,23 @@
   function staffByEmail(email){ return state.staff.find(s=>s.email===email); }
   function staffName(email){ const s = staffByEmail(email); return s ? s.name : (email||'—'); }
   function myEmail(){ return state.session?.user?.email || ''; }
+
+  // Staff Member field for logging follow-up actions. Uses the staff directory
+  // (same source as Captured By / task assignment) so names stay consistent.
+  // Falls back to a free-text input if no staff have been added yet, so the
+  // core "log an action" flow never gets blocked.
+  function staffFieldHtml(){
+    if(!state.staff.length){
+      return `<div class="field"><label>Staff Member</label><input type="text" name="staff" placeholder="Who made contact?" required/></div>`;
+    }
+    const mine = staffByEmail(myEmail())?.name || '';
+    return `<div class="field"><label>Staff Member</label>
+      <select name="staff" required>
+        <option value="" disabled ${mine?'':'selected'}>Select staff member</option>
+        ${state.staff.map(s=>`<option value="${esc(s.name)}" ${s.name===mine?'selected':''}>${esc(s.name)}</option>`).join('')}
+      </select>
+    </div>`;
+  }
 
   // ---------- VISIT PHOTOS ----------
   const PHOTO_BUCKET = 'visit-photos';
@@ -284,7 +304,7 @@
           <tbody>
             ${myOpenTasks.slice(0,8).map(t=>{
               const c = t.customer_id ? customerById(t.customer_id) : null;
-              return `<tr><td>${t.due_date?fmtDate(t.due_date):'—'}</td><td>${t.title}</td><td>${c?c.name:'—'}</td><td>${staffName(t.created_by)}</td></tr>`;
+              return `<tr><td>${t.due_date?fmtDate(t.due_date):'—'}</td><td>${esc(t.title)}</td><td>${c?esc(c.name):'—'}</td><td>${esc(staffName(t.created_by))}</td></tr>`;
             }).join('')}
           </tbody>
         </table>
@@ -299,7 +319,7 @@
             <tbody>
               ${upcoming.slice(0,8).map(i=>{
                 const c = customerById(i.customer_id);
-                return `<tr><td>${fmtDate(i.next_follow_up)}</td><td>${c?c.name:'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${i.staff}</td></tr>`;
+                return `<tr><td>${fmtDate(i.next_follow_up)}</td><td>${c?esc(c.name):'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${esc(i.staff)}</td></tr>`;
               }).join('')}
             </tbody>
           </table>
@@ -314,7 +334,7 @@
             <tbody>
               ${recent.map(i=>{
                 const c = customerById(i.customer_id);
-                return `<tr><td>${fmtDate(i.date)}</td><td>${c?c.name:'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${i.staff}</td><td>${(i.notes||'').slice(0,60)}</td></tr>`;
+                return `<tr><td>${fmtDate(i.date)}</td><td>${c?esc(c.name):'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${esc(i.staff)}</td><td>${esc((i.notes||'').slice(0,60))}</td></tr>`;
               }).join('')}
             </tbody>
           </table>
@@ -402,16 +422,16 @@
       <div class="cust-card" data-id="${c.id}">
         <div class="cust-card-top">
           <div>
-            <h3>${c.name}</h3>
-            <div class="meta">${c.contact_person||''}${c.position ? ' · '+c.position : ''}</div>
+            <h3>${esc(c.name)}</h3>
+            <div class="meta">${esc(c.contact_person||'')}${c.position ? ' · '+esc(c.position) : ''}</div>
           </div>
-          <span class="spend-tag ${spendClass(c.spending_potential)}">${c.spending_potential || ''}</span>
+          <span class="spend-tag ${spendClass(c.spending_potential)}">${esc(c.spending_potential || '')}</span>
         </div>
         <div class="details-row">
-          <span><b>Tel:</b> ${c.contact_number || '—'}</span>
-          <span><b>Email:</b> ${c.email || '—'}</span>
-          <span><b>Current Supplier:</b> ${c.current_supplier || '—'}</span>
-          <span><b>Captured:</b> ${fmtDate(c.date_added)} by ${c.captured_by || '—'}</span>
+          <span><b>Tel:</b> ${esc(c.contact_number || '—')}</span>
+          <span><b>Email:</b> ${esc(c.email || '—')}</span>
+          <span><b>Current Supplier:</b> ${esc(c.current_supplier || '—')}</span>
+          <span><b>Captured:</b> ${fmtDate(c.date_added)} by ${esc(c.captured_by || '—')}</span>
         </div>
       </div>
     `;
@@ -462,13 +482,13 @@
           </div>
         </form>
       ` : `
-        <h2>${c.name}</h2>
-        <div class="sub">${c.contact_person||''}${c.position ? ' · '+c.position : ''}</div>
+        <h2>${esc(c.name)}</h2>
+        <div class="sub">${esc(c.contact_person||'')}${c.position ? ' · '+esc(c.position) : ''}</div>
         <div class="details-row" style="margin-bottom:10px; flex-direction:column; gap:6px; font-size:13.5px;">
-          <div><b>Tel:</b> ${c.contact_number || '—'} &nbsp; <b>Email:</b> ${c.email || '—'}</div>
-          <div><b>Spending Potential:</b> ${c.spending_potential || '—'}</div>
-          <div><b>Current Supplier:</b> ${c.current_supplier || '—'}</div>
-          <div><b>Captured:</b> ${fmtDate(c.date_added)} by ${c.captured_by || '—'}</div>
+          <div><b>Tel:</b> ${esc(c.contact_number || '—')} &nbsp; <b>Email:</b> ${esc(c.email || '—')}</div>
+          <div><b>Spending Potential:</b> ${esc(c.spending_potential || '—')}</div>
+          <div><b>Current Supplier:</b> ${esc(c.current_supplier || '—')}</div>
+          <div><b>Captured:</b> ${fmtDate(c.date_added)} by ${esc(c.captured_by || '—')}</div>
         </div>
         <div style="margin-bottom:14px;"><button class="btn secondary small" id="edit-cust-btn">Edit Customer</button></div>
       `;
@@ -496,10 +516,10 @@
                 </tr>
               ` : `
                 <tr>
-                  <td>${ct.name}</td>
-                  <td>${ct.position||'—'}</td>
-                  <td>${ct.phone||'—'}</td>
-                  <td>${ct.email||'—'}</td>
+                  <td>${esc(ct.name)}</td>
+                  <td>${esc(ct.position||'—')}</td>
+                  <td>${esc(ct.phone||'—')}</td>
+                  <td>${esc(ct.email||'—')}</td>
                   <td style="white-space:nowrap;">
                     <button class="btn secondary small" data-edit-contact="${ct.id}">Edit</button>
                     <button class="btn danger small" data-del-contact="${ct.id}">Remove</button>
@@ -530,7 +550,7 @@
             <div class="field"><label>Action Type</label>
               <select name="type">${TYPES.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select>
             </div>
-            <div class="field"><label>Staff Member</label><input type="text" name="staff" placeholder="Who made contact?" required/></div>
+            ${staffFieldHtml()}
             <div class="field"><label>Next Follow-Up (optional)</label><input type="date" name="next_follow_up"/></div>
             <div class="field full"><label>Notes</label><textarea name="notes" placeholder="Outcome, discussion points, next steps..."></textarea></div>
             ${photoPickerHtml('cust-photo-picker')}
@@ -546,8 +566,8 @@
                   <tr>
                     <td>${fmtDate(i.date)}</td>
                     <td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td>
-                    <td>${i.staff}</td>
-                    <td>${i.notes||'—'}</td>
+                    <td>${esc(i.staff)}</td>
+                    <td>${esc(i.notes||'—')}</td>
                     <td>${i.next_follow_up ? fmtDate(i.next_follow_up) : '—'}</td>
                     <td>${photoHistoryHtml(i.photo_urls)}</td>
                   </tr>`).join('')}
@@ -565,7 +585,7 @@
                     <td>${s.created_at ? fmtDate(s.created_at.slice(0,10)) : '—'}</td>
                     <td>${esc(s.to_email)}</td>
                     <td>${(s.document_names||[]).map(esc).join(', ')}</td>
-                    <td>${staffName(s.sent_by)}</td>
+                    <td>${esc(staffName(s.sent_by))}</td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -805,9 +825,9 @@
                 const c = t.customer_id ? customerById(t.customer_id) : null;
                 return `<tr style="opacity:.6;">
                   <td>${t.due_date?fmtDate(t.due_date):'—'}</td>
-                  <td style="text-decoration:line-through;">${t.title}</td>
-                  <td>${staffName(t.assigned_to)}</td>
-                  <td>${c?c.name:'—'}</td>
+                  <td style="text-decoration:line-through;">${esc(t.title)}</td>
+                  <td>${esc(staffName(t.assigned_to))}</td>
+                  <td>${c?esc(c.name):'—'}</td>
                   <td style="white-space:nowrap;"><button class="btn secondary small" data-reopen-task="${t.id}">Reopen</button> <button class="btn danger small" data-del-task="${t.id}">Delete</button></td>
                 </tr>`;
               }).join('')}
@@ -828,7 +848,7 @@
           <table>
             <thead><tr><th>Name</th><th>Email</th><th></th></tr></thead>
             <tbody>
-              ${state.staff.map(s=>`<tr><td>${s.name}</td><td>${s.email}</td><td><button class="btn danger small" data-del-staff="${s.id}">Remove</button></td></tr>`).join('')}
+              ${state.staff.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.email)}</td><td><button class="btn danger small" data-del-staff="${s.id}">Remove</button></td></tr>`).join('')}
             </tbody>
           </table>
         ` : `<div class="empty-state">No staff added yet — add your team above so you can assign tasks to them.</div>`}
@@ -877,10 +897,10 @@
     return `
       <tr>
         <td>${t.due_date?fmtDate(t.due_date):'—'}</td>
-        <td>${t.title}${t.description?`<div style="font-size:12px; color:var(--muted); margin-top:2px;">${t.description}</div>`:''}</td>
-        <td>${staffName(t.assigned_to)}</td>
-        <td>${c?c.name:'—'}</td>
-        <td>${staffName(t.created_by)}</td>
+        <td>${esc(t.title)}${t.description?`<div style="font-size:12px; color:var(--muted); margin-top:2px;">${esc(t.description)}</div>`:''}</td>
+        <td>${esc(staffName(t.assigned_to))}</td>
+        <td>${c?esc(c.name):'—'}</td>
+        <td>${esc(staffName(t.created_by))}</td>
         <td style="white-space:nowrap;"><button class="btn small" data-done-task="${t.id}">Mark Done</button> <button class="btn danger small" data-del-task="${t.id}">Delete</button></td>
       </tr>
     `;
@@ -957,7 +977,7 @@
                   <td>${c?c.name:'—'}</td>
                   <td>${esc(s.to_email)}</td>
                   <td>${(s.document_names||[]).map(esc).join(', ')}</td>
-                  <td>${staffName(s.sent_by)}</td>
+                  <td>${esc(staffName(s.sent_by))}</td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -1201,11 +1221,11 @@
     const statusLabel = LEAD_STATUSES.find(s=>s.key===l.status)?.label || l.status;
     return `
       <tr>
-        <td><b>${l.name||'—'}</b></td>
-        <td>${l.address||'—'}</td>
-        <td>${l.phone||'—'}</td>
-        <td>${l.website ? `<a href="${l.website}" target="_blank" rel="noopener">Visit</a>` : '—'}</td>
-        <td>${l.matched_category||'—'}</td>
+        <td><b>${esc(l.name||'—')}</b></td>
+        <td>${esc(l.address||'—')}</td>
+        <td>${esc(l.phone||'—')}</td>
+        <td>${l.website ? `<a href="${esc(l.website)}" target="_blank" rel="noopener">Visit</a>` : '—'}</td>
+        <td>${esc(l.matched_category||'—')}</td>
         <td><span class="pill ${l.status==='converted'?'email':l.status==='dismissed'?'quote':l.status==='contacted'?'call':'physical'}">${statusLabel}</span></td>
         <td style="white-space:nowrap;">
           ${l.status==='new' ? `<button class="btn secondary small" data-contacted-lead="${l.id}">Mark Contacted</button> ` : ''}
@@ -1321,7 +1341,7 @@
           <div class="field"><label>Action Type</label>
             <select name="type">${TYPES.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select>
           </div>
-          <div class="field"><label>Staff Member</label><input type="text" name="staff" placeholder="Who made contact?" required/></div>
+          ${staffFieldHtml()}
           <div class="field full"><label>Next Follow-Up (optional)</label><input type="date" name="next_follow_up"/></div>
           <div class="field full"><label>Notes</label><textarea name="notes"></textarea></div>
           ${photoPickerHtml('day-photo-picker')}
@@ -1334,7 +1354,7 @@
             <tbody>
               ${items.map(i=>{
                 const c = customerById(i.customer_id);
-                return `<tr><td>${c?c.name:'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${i.staff}</td><td>${i.notes||'—'}</td><td>${photoHistoryHtml(i.photo_urls)}</td></tr>`;
+                return `<tr><td>${c?esc(c.name):'—'}</td><td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td><td>${esc(i.staff)}</td><td>${esc(i.notes||'—')}</td><td>${photoHistoryHtml(i.photo_urls)}</td></tr>`;
               }).join('')}
             </tbody>
           </table>
@@ -1408,10 +1428,10 @@
                 const c = customerById(i.customer_id);
                 return `<tr>
                   <td>${fmtDate(i.date)}</td>
-                  <td>${c?c.name:'—'}</td>
+                  <td>${c?esc(c.name):'—'}</td>
                   <td><span class="pill ${i.type}">${typeLabel(i.type)}</span></td>
-                  <td>${i.staff}</td>
-                  <td>${i.notes||'—'}</td>
+                  <td>${esc(i.staff)}</td>
+                  <td>${esc(i.notes||'—')}</td>
                   <td>${i.next_follow_up?fmtDate(i.next_follow_up):'—'}</td>
                 </tr>`;
               }).join('')}
