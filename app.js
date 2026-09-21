@@ -1067,7 +1067,7 @@
     overlay.querySelector('#welcome-template-btn').onclick = ()=>{
       const form = overlay.querySelector('#send-docs-form');
       form.subject.value = 'Welcome to Natluc Trading — a quick tour of natluc.net';
-      form.message.value = `Hi${c.contact_person ? ' ' + c.contact_person : ''},\n\nWelcome to Natluc Trading! To help you get the most out of natluc.net, we've put together a short video walking through:\n\n- Finding the Cromwell and Iscar tooling catalogs\n- Browsing by category to find the right part or spec\n- Using the free shop-floor toolbox calculator\n- Submitting a quote request for custom or urgent needs\n- Reaching us directly if you need a hand\n\nWe've also attached our credit application in case you'd like to set up an account.\n\nAny questions, just reply to this email.`;
+      form.message.value = `Welcome to Natluc Trading — we're glad to have you on board.\n\nTo help you get the most out of natluc.net, we've recorded a short walkthrough video. Click the Watch button below to see how to:\n\n- Find the Cromwell and Iscar tooling catalogs\n- Browse by category to quickly locate the right part or spec\n- Use the free shop-floor toolbox calculator\n- Send us a quote request for custom or urgent items\n- Get hold of our team whenever you need a hand\n\nWe've also attached our credit application, in case you'd like to open an account with us.\n\nAny questions at all, just reply to this email — we're happy to help.\n\nKind regards,\nNatluc Trading\naccounts@natluctrading.co.za`;
       const videoDoc = state.documents.find(d => (d.mime_type||'').startsWith('video/'));
       const creditDoc = state.documents.find(d => /credit application/i.test(d.name));
       form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
@@ -1077,8 +1077,8 @@
 
     overlay.querySelector('#credit-app-template-btn').onclick = ()=>{
       const form = overlay.querySelector('#send-docs-form');
-      form.subject.value = 'Natluc Trading — Credit Application';
-      form.message.value = `Thank you for your interest in trading with Natluc Trading.\n\nPlease find attached our Credit Application Form for completion. Once completed, kindly return the form along with the required supporting documentation to accounts@natluctrading.co.za.\n\nShould you have any questions or require assistance, please feel free to contact us. You can also visit us at www.natluc.net.\n\nWe look forward to doing business with you.\n\nKind regards,\nNatluc Trading\nAccounts Department\naccounts@natluctrading.co.za`;
+      form.subject.value = 'Your Natluc Trading credit application';
+      form.message.value = `Thank you for your interest in opening an account with Natluc Trading.\n\nPlease find our Credit Application Form attached. Once completed, kindly return it — along with the required supporting documents — to accounts@natluctrading.co.za, and we'll get your account set up.\n\nIf you have any questions or need a hand with the form, just reply to this email. You're also welcome to browse our full range anytime at www.natluc.net.\n\nWe look forward to doing business with you.\n\nKind regards,\nNatluc Trading\nAccounts Department\naccounts@natluctrading.co.za`;
       const creditDoc = state.documents.find(d => /credit application/i.test(d.name));
       form.querySelectorAll('input[name=doc_ids]').forEach(cb=>{
         cb.checked = (creditDoc && cb.value===creditDoc.id);
